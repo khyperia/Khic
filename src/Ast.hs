@@ -15,6 +15,8 @@ data BinaryOperation = Addition
                      | Division
                      | ShiftLeft
                      | ShiftRight
+                     | Equality
+                     | NotEquality
                      | Or
                      | And
         deriving(Eq, Show, Ord)

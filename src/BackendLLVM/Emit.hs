@@ -1,10 +1,13 @@
-module BackendLLVM.Emit where
+module BackendLLVM.Emit (emit) where
 
 import LLVM.General.AST as LAst
+import qualified LLVM.General.AST.Type as LTy
 import qualified LLVM.General.AST.Global as G
 import qualified LLVM.General.AST.Constant as Const
 import qualified LLVM.General.AST.Float as Float
 import qualified LLVM.General.AST.CallingConvention as CC
+import qualified LLVM.General.AST.IntegerPredicate as IntPredicate
+import qualified LLVM.General.AST.FloatingPointPredicate as FloatPredicate
 import qualified Data.Map.Strict as Map
 import Data.Maybe
 import Control.Monad.State
@@ -14,7 +17,7 @@ import BasicBlockAst
 import BasicBlockTransformer
 import Typing.TypeRetriever
 
-data BBState = BBState { generatedBBs :: Map.Map BBAst Name, localContext :: Map.Map String Operand, currentLabel :: Int }
+data BBState = BBState { localContext :: Map.Map String Operand, currentLabel :: Int }
 type EmitBBExpr a = WriterT [Named Instruction] (State BBState) a
 type EmitBBAst a = WriterT [BasicBlock] (State BBState) a
 
@@ -44,10 +47,14 @@ emitExpr expr@(BinaryOp op leftExpr rightExpr) =
         getOp (IntType _) ShiftRight = \x y -> AShr False x y []
         getOp (IntType _) Ast.And = \x y -> LAst.And x y []
         getOp (IntType _) Ast.Or = \x y -> LAst.Or x y []
+        getOp (IntType _) Ast.Equality = \x y -> LAst.ICmp IntPredicate.EQ x y []
+        getOp (IntType _) Ast.NotEquality = \x y -> LAst.ICmp IntPredicate.NE x y []
         getOp (FloatType _) Addition = \x y -> FAdd x y []
         getOp (FloatType _) Subtraction = \x y -> FSub x y []
         getOp (FloatType _) Multiplication = \x y -> FMul x y []
         getOp (FloatType _) Division = \x y -> FDiv x y []
+        getOp (FloatType _) Ast.Equality = \x y -> LAst.FCmp FloatPredicate.OEQ x y []
+        getOp (FloatType _) Ast.NotEquality = \x y -> LAst.FCmp FloatPredicate.ONE x y []
         getOp ty oper = error ("Cannot perform operation " ++ show oper ++ " on type " ++ show ty)
 emitExpr (Negation expr) =
         case getType expr of
@@ -83,14 +90,18 @@ emitExpr (MethodCall funcExpr argsExpr) = do
 tellBlockInst :: [Named Instruction] -> Terminator -> EmitBBAst Name
 tellBlockInst instructions terminator = do
         name <- genLabel
-        tell [BasicBlock name (reverse instructions) (Do terminator)]
+        tell [BasicBlock name instructions (Do terminator)]
         return name
 
-tellBlock :: [Expression] -> Expression -> (Operand -> Terminator) -> EmitBBAst Name
-tellBlock exprsExpr termval termf = do
+tellBlockM :: [Expression] -> Expression -> (Operand -> EmitBBAst Terminator) -> EmitBBAst Name
+tellBlockM exprsExpr termval termf = do
         (a, instructions) <- lift $ runWriterT (mapM_ emitExpr exprsExpr >> emitExpr termval) -- TODO: Possible bug here
-        tellBlockInst instructions (termf a)
-        
+        term <- termf a
+        tellBlockInst instructions term
+
+tellBlock :: [Expression] -> Expression -> (Operand -> Terminator) -> EmitBBAst Name
+tellBlock exprsExpr termval termf = tellBlockM exprsExpr termval (return . termf)
+
 tellBlockTerm :: [Expression] -> Terminator -> EmitBBAst Name
 tellBlockTerm exprsExpr term = do
         (_, instructions) <- lift $ runWriterT (mapM_ emitExpr exprsExpr)
@@ -98,31 +109,38 @@ tellBlockTerm exprsExpr term = do
 
 emitBB :: Name -> BBAst -> EmitBBAst Name
 emitBB jumpto (Drop exprsExpr) =
-        tellBlock exprsExpr undefined (const $ Br jumpto [])
+        tellBlockTerm exprsExpr (Br jumpto [])
 emitBB _ (BasicBlockAst.Ret exprs (Just retExpr)) =
         tellBlock exprs retExpr (\retval -> LAst.Ret (Just retval) [])
 emitBB _ (BasicBlockAst.Ret exprs Nothing) =
         tellBlockTerm exprs (LAst.Ret Nothing [])
+emitBB jumpto (Branch exprs conditionExpr ifTrueExpr ifFalseExpr nextExpr) = do
+        next <- emitBB jumpto nextExpr
+        tellBlockM exprs conditionExpr (\cond -> do
+                trueLabel <- emitBB next ifTrueExpr
+                falseLabel <- emitBB next ifFalseExpr
+                return $ LAst.CondBr cond trueLabel falseLabel [])
+        
 -- TODO: Fill in rest
 
-lookupBB :: Name -> BBAst -> EmitBBAst Name
-lookupBB jumpto ast = do
-        st <- get
-        let alreadyGenned = generatedBBs st in
-         case Map.lookup ast alreadyGenned of
-         Nothing -> do
-                genName <- emitBB jumpto ast
-                put st { generatedBBs = Map.insert ast genName alreadyGenned }
-                return genName
-         Just name -> return name
-
 convertType :: Ast.Type -> LAst.Type
-convertType = undefined
+convertType Var = error "Var type in Emit"
+convertType (Ast.FunctionType returnType argsType) = LTy.FunctionType (convertType returnType) (map convertType argsType) False
+convertType (Structure containedTypes) = LTy.StructureType False (map convertType containedTypes)
+convertType (IntType numBits) = LTy.IntegerType (fromIntegral numBits)
+convertType (FloatType numBits) = LTy.FloatingPointType (fromIntegral numBits) IEEE
+convertType (Ast.VoidType) = LTy.VoidType
+convertType (UnknownType s) = LTy.NamedTypeReference (Name s)
 
 emitTld :: TopLevelDeclaration -> Definition
 emitTld (Ast.Function retType fnName args (Just body)) =
         let bodyBlock = transformBB body;
-            ((_, blocks), _) = flip runState BBState{ generatedBBs = Map.empty, localContext = Map.empty, currentLabel = 1 } . runWriterT $ emitBB undefined bodyBlock in
+            ((_, blocks), _) = flip runState BBState{ localContext = foldl (\m (_, str) -> Map.insert str (LocalReference (Name str)) m) Map.empty args, currentLabel = 1 } . runWriterT $
+                (if retType == Ast.VoidType then
+                        (do
+                        val <- emitBB undefined (BasicBlockAst.Ret [] Nothing)
+                        emitBB val bodyBlock)
+                else emitBB  (error "Must have return value") bodyBlock) in
         GlobalDefinition functionDefaults {
                 G.returnType = convertType retType,
                 G.name = Name fnName,

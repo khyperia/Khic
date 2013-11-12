@@ -25,7 +25,10 @@ typecheckExpr :: Context -> Expression -> (Expression, Type, Context)
 typecheckExpr ctx0 (BinaryOp op l r) =
         let (lcheck, ltype, ctx1) = typecheckExpr ctx0 l;
             (rcheck, rtype, ctx2) = typecheckExpr ctx1 r in
-        (BinaryOp op lcheck rcheck, isNum $ fuseType ltype rtype, ctx2)
+        case op of
+                Equality ->    (BinaryOp op lcheck rcheck, fuseType ltype rtype `seq` IntType 1, ctx2)
+                NotEquality -> (BinaryOp op lcheck rcheck, fuseType ltype rtype `seq` IntType 1, ctx2)
+                _ -> (BinaryOp op lcheck rcheck, isNum $ fuseType ltype rtype, ctx2)
 typecheckExpr ctx0 (Negation x) =
         let (check, ty, ctx1) = typecheckExpr ctx0 x in
         (Negation check, isNum ty, ctx1)
@@ -35,7 +38,7 @@ typecheckExpr ctx0 (MethodCall expr args) =
         case exprtype of
         (FunctionType returnType fnArgsType) ->
                 let argsZip = zipWith fuseType fnArgsType (map second argstype) in
-                (MethodCall exprcheck (map first argstype), FunctionType returnType argsZip, ctx1)
+                (MethodCall exprcheck (map first argstype), argsZip `seq` returnType, ctx1)
         _ -> error "Left hand side of an invocation was not a function"
   where first (x, _, _) = x
         second (_, x, _) = x

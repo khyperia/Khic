@@ -57,6 +57,7 @@ primary :: Parser Expression
 primary = (ConstantInteger 32 <$> pinteger)
       <|> ((\b -> ConstantInteger 1 (if b then 1 else 0)) <$> pboolean)
       <|> (Identifier Var <$> identifier)
+      <|> (Identifier Var <$> between (char '`') (tokenSymbol "`") (many1 (noneOf "`")))
       <|> parentheses parseExpr
       <?> "value"
 
@@ -68,6 +69,7 @@ parseExpr = buildExpressionParser table primary
                 ,[binary "*" (BinaryOp Multiplication) AssocLeft, binary "/" (BinaryOp Division) AssocLeft]
                 ,[binary "+" (BinaryOp Addition) AssocLeft, binary "-" (BinaryOp Subtraction) AssocLeft]
                 ,[binary "<<" (BinaryOp ShiftLeft) AssocLeft, binary ">>" (BinaryOp ShiftRight) AssocLeft]
+                ,[binary "==" (BinaryOp Equality) AssocLeft, binary "!=" (BinaryOp NotEquality) AssocLeft]
                 ,[binary "&" (BinaryOp And) AssocLeft]
                 ,[binary "|" (BinaryOp Or) AssocLeft]
                 ,[binary "=" Assignment AssocRight]
@@ -82,7 +84,7 @@ parseWhile :: Parser Statement
 parseWhile = WhileStatement <$> (tokenWord "while" *> parseExpr) <*> parseBlock
 
 parseReturn :: Parser Statement
-parseReturn = (Return . Just) <$> (tokenWord "return" *> parseExpr <* semicolon)
+parseReturn = Return <$> (tokenWord "return" *> (Just <$> (parseExpr <* semicolon) <|> (pure Nothing <* semicolon)))
 
 parseStatement :: Parser Statement
 parseStatement = parseIf <|> parseWhile <|> parseReturn <|> (ExprStatement <$> parseExpr <* semicolon)

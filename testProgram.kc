@@ -1,0 +1,36 @@
+i32 getchar();
+i32 putchar(i32 x);
+
+i32 `__main`()
+{
+	whee(111);
+	fun = funptr;
+	fun();
+	count(97);
+	return 0;
+}
+
+void funptr()
+{
+	putchar(110);
+	putchar(10);
+}
+
+void count(i32 i)
+{
+	if (i == 123)
+		return;
+	putchar(i);
+	count(i + 1);
+}
+
+void whee(i32 p)
+{
+	x = getchar();
+	if (x != p)
+	{
+		putchar(p);
+		putchar(x);
+		whee(p);
+	}
+}

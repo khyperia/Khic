@@ -1,13 +1,28 @@
 module Main where
 
+import System.IO
+import System.Process
+import System.Directory
 import Parser
 import Typing.Typechecker
-import System.IO
+import BackendLLVM.Emit
+import BackendLLVM.Compile
 
-process :: String -> String
-process = show . typecheck . parse "<interpreted>"
+link :: IO ()
+link = do
+        handle <- runCommand "ld a.obj -lmsvcrt"
+        _ <- waitForProcess handle
+        removeFile "a.obj"
+        return ()
+
+process :: String -> IO ()
+process = compile . emit . typecheck . parse "<interpreted>"
 
 main::IO()
 main = do
         hSetBuffering stdout NoBuffering
-        interact $ unlines . map process . lines
+        content <- readFile "testProgram.kc"
+        () <- process content
+        putStrLn "linking"
+        () <- link
+        putStrLn "done"

@@ -13,7 +13,9 @@ executable Khic
                    llvm-general-pure,
                    parsec,
                    containers,
-                   mtl
+                   mtl,
+                   process,
+                   directory
   ghc-options:     -Wall
   other-modules:   
                    Parser,
@@ -22,5 +24,6 @@ executable Khic
                    Typing.Typechecker,
                    BasicBlockTransformer,
                    BasicBlockAst,
-                   BackendLLVM.Emit
+                   BackendLLVM.Emit,
+                   BackendLLVM.Compile
 
