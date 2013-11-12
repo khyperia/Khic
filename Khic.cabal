@@ -7,6 +7,16 @@ author:         Evan
 executable Khic
   hs-source-dirs:  src
   main-is:         Main.hs
-  build-depends:   base >= 4
+  build-depends:   
+                   base >= 4,
+                   llvm-general,
+                   llvm-general-pure,
+                   parsec,
+                   containers
   ghc-options:     -Wall
+  other-modules:   
+                   Parser,
+                   Ast,
+                   Typing.TypeRetriever,
+                   Typing.Typechecker
 
