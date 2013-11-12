@@ -7,7 +7,7 @@ data Type = Var
           | FloatType Int
           | VoidType
           | UnknownType String
-        deriving(Eq, Show)
+        deriving(Eq, Show, Ord)
 
 data BinaryOperation = Addition
                      | Subtraction
@@ -17,16 +17,17 @@ data BinaryOperation = Addition
                      | ShiftRight
                      | Or
                      | And
-        deriving(Eq, Show)
+        deriving(Eq, Show, Ord)
 
 data Expression = BinaryOp BinaryOperation Expression Expression
                 | Negation Expression
                 | MethodCall Expression [Expression]
                 | Assignment Expression Expression
                 | Identifier Type String
-                | ConstantInteger Type Integer
+                | ConstantInteger Int Integer
+                | ConstantFloat Int Double
                 | Cast Type Expression
-        deriving(Eq, Show)
+        deriving(Eq, Show, Ord)
 
 type Block = [Statement]
 

@@ -48,7 +48,8 @@ typecheckExpr ctx0 (Assignment (Identifier idType var) expr) =
 typecheckExpr _ (Assignment _ _) = error "Pattern matching is not supported (only a single identifier is allowed to the left of an expression)"
 typecheckExpr ctx0 (Identifier _ str) =
         let ty = ctx0 Map.! str in (Identifier ty str, ty, ctx0)
-typecheckExpr ctx0 x@(ConstantInteger ty _) = (x, ty, ctx0)
+typecheckExpr ctx0 x@(ConstantInteger ty _) = (x, IntType ty, ctx0)
+typecheckExpr ctx0 x@(ConstantFloat ty _) = (x, FloatType ty, ctx0)
 typecheckExpr ctx0 (Cast ty expr) =
         let (ccheck, _, ctx1) = typecheckExpr ctx0 expr in (Cast ty ccheck, ty, ctx1)
 
@@ -76,7 +77,9 @@ typecheckStmt ctx0 (Return (Just value)) =
         let (valueCheck, valueType, ctx1) = typecheckExpr ctx0 value;
             typechecked = fuseType valueType (ctx1 Map.! rettypeKeyword) in
         typechecked `seq` (Return (Just valueCheck), ctx1)
-typecheckStmt ctx0 (Return Nothing) = (Return Nothing, ctx0)
+typecheckStmt ctx0 (Return Nothing) =
+        let typechecked = fuseType VoidType (ctx0 Map.! rettypeKeyword) in
+        typechecked `seq` (Return Nothing, ctx0)
 
 typecheckBlock :: Context -> Block -> (Block, Context)
 typecheckBlock ctx [] = ([], ctx)

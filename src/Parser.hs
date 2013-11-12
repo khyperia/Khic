@@ -54,8 +54,8 @@ parseType = foldl FunctionType <$> basic <*> many (parenCommas parseType) <?> "t
             <|> (UnknownType <$> identifier)
 
 primary :: Parser Expression
-primary = (ConstantInteger (IntType 32) <$> pinteger)
-      <|> ((\b -> ConstantInteger (IntType 1) (if b then 1 else 0)) <$> pboolean)
+primary = (ConstantInteger 32 <$> pinteger)
+      <|> ((\b -> ConstantInteger 1 (if b then 1 else 0)) <$> pboolean)
       <|> (Identifier Var <$> identifier)
       <|> parentheses parseExpr
       <?> "value"
