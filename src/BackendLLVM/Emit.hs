@@ -140,19 +140,16 @@ emitBB jumpto prefix (Branch exprs conditionExpr ifTrueExpr ifFalseExpr nextExpr
                 realnext <- emitBB jumpto phis nextExpr
                 return (LAst.CondBr cond trueLabel falseLabel [], realnext)))
 emitBB jumpto prefix (Loop exprs conditionExpr bodyExpr nextExpr) =
-        liftM fstSeq $ mfix (\ ~(_, nextFix) -> do
-        retvalOuter <- liftM firstSeq $ mfix (\ ~(_, whileLabelFix, bodyLabelFix, bodyCtxFix) -> do
+        liftM first $ mfix (\ ~(_, whileLabelFix, bodyLabelFix, bodyCtxFix, nextFix) -> do
                 retval <- emitBB whileLabelFix prefix (Drop exprs)
                 exprCtx <- liftM localContext get
                 phis <- createPhis [(exprCtx, retval), (bodyCtxFix, bodyLabelFix)] (nub $ getChangedVars (Drop exprs) ++ getChangedVars bodyExpr)
                 whileLabel <- tellBlock phis [] conditionExpr (\cond -> LAst.CondBr cond bodyLabelFix nextFix [])
                 bodyLabel <- emitBB whileLabel [] bodyExpr
                 bodyCtx <- liftM localContext get
-                return (retval, whileLabel, bodyLabel, bodyCtx))
-        next <- emitBB jumpto [] nextExpr
-        return (retvalOuter, next))
-  where firstSeq (x, a, b, c) = a `seq` b `seq` c `seq` x
-        fstSeq (x, a) = a `seq` x
+                next <- emitBB jumpto [] nextExpr
+                return (retval, whileLabel, bodyLabel, bodyCtx, next))
+  where first (x, _, _, _, _) = x
 
 convertType :: Ast.Type -> LAst.Type
 convertType Var = error "Var type in Emit"
