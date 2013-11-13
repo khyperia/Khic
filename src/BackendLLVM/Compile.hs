@@ -14,5 +14,7 @@ extractError = liftM switch . runErrorT
 compile :: Ast.Module -> IO ()
 compile m = withContext $ \context ->
             extractError $ withDefaultTargetMachine $ \machine ->
-            extractError $ withModuleFromAST context m $ \llvmMod ->
+            extractError $ withModuleFromAST context m $ \llvmMod -> do
+            mstr <- moduleString llvmMod
+            putStrLn mstr
             extractError $ writeObjectToFile machine "a.obj" llvmMod

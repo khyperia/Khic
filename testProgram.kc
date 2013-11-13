@@ -3,11 +3,23 @@ i32 putchar(i32 x);
 
 i32 `__main`()
 {
+	testwhile();
 	whee(111);
 	fun = funptr;
 	fun();
 	count(97);
+	putchar(assignTest(0));
 	return 0;
+}
+
+void testwhile()
+{
+	x = 97;
+	while (x != 123)
+	{
+		putchar(x);
+		x = x + 1;
+	}
 }
 
 void funptr()
@@ -22,6 +34,14 @@ void count(i32 i)
 		return;
 	putchar(i);
 	count(i + 1);
+}
+
+i32 assignTest(i32 val)
+{
+	x = 0;
+	if (val == 0)
+		x = 110;
+	return x;
 }
 
 void whee(i32 p)

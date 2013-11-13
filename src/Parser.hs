@@ -14,7 +14,7 @@ tokenSymbol :: String -> Parser String
 tokenSymbol s = try (string s) <* spaces
 
 tokenWord :: String -> Parser String
-tokenWord s = try (string s) <* notFollowedBy alphaNum <* spaces
+tokenWord s = try (string s <* notFollowedBy alphaNum) <* spaces
 
 identifier :: Parser String
 identifier = (((:) <$> letter <*> many alphaNum) <|> between (char '`') (char '`') (many1 (noneOf "`"))) <* spaces <?> "identifier"

@@ -10,12 +10,14 @@ import qualified LLVM.General.AST.IntegerPredicate as IntPredicate
 import qualified LLVM.General.AST.FloatingPointPredicate as FloatPredicate
 import qualified Data.Map.Strict as Map
 import Data.Maybe
+import Data.List
 import Control.Monad.State
 import Control.Monad.Writer
 import Ast
 import BasicBlockAst
 import BasicBlockTransformer
 import Typing.TypeRetriever
+import Typing.PhiAnalyzer
 
 data BBState = BBState { localContext :: Map.Map String Operand, currentLabel :: Int }
 type EmitBBExpr a = WriterT [Named Instruction] (State BBState) a
@@ -87,41 +89,70 @@ emitExpr (MethodCall funcExpr argsExpr) = do
         func <- emitExpr funcExpr
         tellInstruction (Call False CC.C [] (Right func) (map (\a -> (a, [])) args) [] []) -- TODO: Change CC.C to callconv
 
-tellBlockInst :: [Named Instruction] -> Terminator -> EmitBBAst Name
-tellBlockInst instructions terminator = do
+tellBlockInst :: [Named Instruction] -> [Named Instruction] -> Terminator -> EmitBBAst Name
+tellBlockInst prefix instructions terminator = do
         name <- genLabel
-        tell [BasicBlock name instructions (Do terminator)]
+        tell [BasicBlock name (prefix ++ instructions) (Do terminator)]
         return name
 
-tellBlockM :: [Expression] -> Expression -> (Operand -> EmitBBAst Terminator) -> EmitBBAst Name
-tellBlockM exprsExpr termval termf = do
-        (a, instructions) <- lift $ runWriterT (mapM_ emitExpr exprsExpr >> emitExpr termval) -- TODO: Possible bug here
+tellBlockM :: [Named Instruction] -> [Expression] -> Expression -> (Operand -> EmitBBAst Terminator) -> EmitBBAst Name
+tellBlockM prefix exprsExpr termval termf = do
+        (a, instructions) <- lift $ runWriterT (mapM_ emitExpr exprsExpr >> emitExpr termval)
+        liftM fst $ mfix (\ ~(_, termFix) -> do
+        retval <- tellBlockInst prefix instructions termFix
         term <- termf a
-        tellBlockInst instructions term
+        return (retval, term))
 
-tellBlock :: [Expression] -> Expression -> (Operand -> Terminator) -> EmitBBAst Name
-tellBlock exprsExpr termval termf = tellBlockM exprsExpr termval (return . termf)
+tellBlock :: [Named Instruction] -> [Expression] -> Expression -> (Operand -> Terminator) -> EmitBBAst Name
+tellBlock prefix exprsExpr termval termf = tellBlockM prefix exprsExpr termval (return . termf)
 
-tellBlockTerm :: [Expression] -> Terminator -> EmitBBAst Name
-tellBlockTerm exprsExpr term = do
+tellBlockTerm :: [Named Instruction] -> [Expression] -> Terminator -> EmitBBAst Name
+tellBlockTerm prefix exprsExpr term = do
         (_, instructions) <- lift $ runWriterT (mapM_ emitExpr exprsExpr)
-        tellBlockInst instructions term
+        tellBlockInst prefix instructions term
 
-emitBB :: Name -> BBAst -> EmitBBAst Name
-emitBB jumpto (Drop exprsExpr) =
-        tellBlockTerm exprsExpr (Br jumpto [])
-emitBB _ (BasicBlockAst.Ret exprs (Just retExpr)) =
-        tellBlock exprs retExpr (\retval -> LAst.Ret (Just retval) [])
-emitBB _ (BasicBlockAst.Ret exprs Nothing) =
-        tellBlockTerm exprs (LAst.Ret Nothing [])
-emitBB jumpto (Branch exprs conditionExpr ifTrueExpr ifFalseExpr nextExpr) = do
-        next <- emitBB jumpto nextExpr
-        tellBlockM exprs conditionExpr (\cond -> do
-                trueLabel <- emitBB next ifTrueExpr
-                falseLabel <- emitBB next ifFalseExpr
-                return $ LAst.CondBr cond trueLabel falseLabel [])
-        
--- TODO: Fill in rest
+createPhis :: [(Map.Map String Operand, Name)] -> [(String, Ast.Type)] -> EmitBBAst [Named Instruction]
+createPhis _ [] = return []
+createPhis vars ((phi, phitype):phis) =
+        let ops = map (\(op, name) -> (op Map.! phi, name)) vars in do
+        lbl <- genLabel
+        modify (\st -> st{ localContext = Map.insert phi (LocalReference lbl) $ localContext st })
+        rest <- createPhis vars phis
+        return ((lbl := Phi (convertType phitype) ops []) : rest)
+
+emitBB :: Name -> [Named Instruction] -> BBAst -> EmitBBAst Name
+emitBB jumpto prefix (Drop exprsExpr) =
+        tellBlockTerm prefix exprsExpr (Br jumpto [])
+emitBB _ prefix (BasicBlockAst.Ret exprs (Just retExpr)) =
+        tellBlock prefix exprs retExpr (\retval -> LAst.Ret (Just retval) [])
+emitBB _ prefix (BasicBlockAst.Ret exprs Nothing) =
+        tellBlockTerm prefix exprs (LAst.Ret Nothing [])
+emitBB jumpto prefix (Branch exprs conditionExpr ifTrueExpr ifFalseExpr nextExpr) =
+        tellBlockM prefix exprs conditionExpr (\cond -> liftM fst $ mfix (\ ~(_, next) -> do
+                st <- get
+                trueLabel <- emitBB next [] ifTrueExpr
+                stTrue <- get
+                put st { currentLabel = currentLabel stTrue }
+                falseLabel <- emitBB next [] ifFalseExpr
+                stFalse <- get
+                put st { currentLabel = currentLabel stFalse }
+                phis <- createPhis [(localContext stTrue, trueLabel), (localContext stFalse, falseLabel)] (nub $ getChangedVars ifTrueExpr ++ getChangedVars ifFalseExpr)
+                realnext <- emitBB jumpto phis nextExpr
+                return (LAst.CondBr cond trueLabel falseLabel [], realnext)))
+emitBB jumpto prefix (Loop exprs conditionExpr bodyExpr nextExpr) =
+        liftM fstSeq $ mfix (\ ~(_, nextFix) -> do
+        retvalOuter <- liftM firstSeq $ mfix (\ ~(_, whileLabelFix, bodyLabelFix, bodyCtxFix) -> do
+                retval <- emitBB whileLabelFix prefix (Drop exprs)
+                exprCtx <- liftM localContext get
+                phis <- createPhis [(exprCtx, retval), (bodyCtxFix, bodyLabelFix)] (nub $ getChangedVars (Drop exprs) ++ getChangedVars bodyExpr)
+                whileLabel <- tellBlock phis [] conditionExpr (\cond -> LAst.CondBr cond bodyLabelFix nextFix [])
+                bodyLabel <- emitBB whileLabel [] bodyExpr
+                bodyCtx <- liftM localContext get
+                return (retval, whileLabel, bodyLabel, bodyCtx))
+        next <- emitBB jumpto [] nextExpr
+        return (retvalOuter, next))
+  where firstSeq (x, a, b, c) = a `seq` b `seq` c `seq` x
+        fstSeq (x, a) = a `seq` x
 
 convertType :: Ast.Type -> LAst.Type
 convertType Var = error "Var type in Emit"
@@ -137,15 +168,16 @@ emitTld (Ast.Function retType fnName args (Just body)) =
         let bodyBlock = transformBB body;
             ((_, blocks), _) = flip runState BBState{ localContext = foldl (\m (_, str) -> Map.insert str (LocalReference (Name str)) m) Map.empty args, currentLabel = 1 } . runWriterT $
                 (if retType == Ast.VoidType then
-                        (do
-                        val <- emitBB undefined (BasicBlockAst.Ret [] Nothing)
-                        emitBB val bodyBlock)
-                else emitBB  (error "Must have return value") bodyBlock) in
+                        liftM fst (mfix (\ ~(_, valfix) -> do
+                        retval <- emitBB valfix [] bodyBlock
+                        realval <- emitBB undefined [] (BasicBlockAst.Ret [] Nothing)
+                        return (retval, realval)))
+                else emitBB  (error "Must have return value") [] bodyBlock) in
         GlobalDefinition functionDefaults {
                 G.returnType = convertType retType,
                 G.name = Name fnName,
                 G.parameters = (map (\(t, s) -> Parameter (convertType t) (Name s) []) args, False),
-                G.basicBlocks = reverse blocks
+                G.basicBlocks = blocks
                 }
 emitTld (Ast.Function retType fnName args Nothing) =
         GlobalDefinition functionDefaults {

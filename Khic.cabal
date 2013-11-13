@@ -25,5 +25,6 @@ executable Khic
                    BasicBlockTransformer,
                    BasicBlockAst,
                    BackendLLVM.Emit,
-                   BackendLLVM.Compile
+                   BackendLLVM.Compile,
+                   Typing.PhiAnalyzer
 
