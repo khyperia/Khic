@@ -1,5 +1,6 @@
 module Parser (Parser.parse) where
 
+import qualified LLVM.General.AST.CallingConvention as CC
 import Text.Parsec
 import Text.Parsec.Expr
 import Text.Parsec.String
@@ -50,6 +51,7 @@ parseType = foldl FunctionType <$> basic <*> many (parenCommas parseType) <?> "t
   where basic = (const Var <$> tokenWord "#")
             <|> (IntType <$> (char 'i' *> pint))
             <|> (FloatType <$> (char 'f' *> pint))
+            <|> (PointerType <$> (char 'p' *> parseType))
             <|> (const VoidType <$> tokenWord "void")
             <|> (UnknownType <$> identifier)
 
@@ -61,9 +63,15 @@ primary = (ConstantInteger 32 <$> pinteger)
       <|> parentheses parseExpr
       <?> "value"
 
+pcallconv :: Parser CC.CallingConvention
+pcallconv = tokenSymbol "@" *> callconv <|> pure CC.C
+  where callconv = (const CC.C <$> tokenWord "c")
+               <|> (const stdCall <$> tokenWord "stdcall")
+        stdCall = CC.Numbered 64
+
 parseExpr :: Parser Expression
 parseExpr = buildExpressionParser table primary
-  where table = [[Postfix (flip MethodCall <$> parenCommas parseExpr <?> "function application")]
+  where table = [[Postfix ((\callconv args expr -> MethodCall callconv expr args) <$> pcallconv <*> parenCommas parseExpr <?> "function application")]
                 ,[Postfix (Cast <$> (tokenSymbol "@" *> parseType))]
                 ,[prefix "-" Negation]
                 ,[binary "*" (BinaryOp Multiplication) AssocLeft, binary "/" (BinaryOp Division) AssocLeft]
@@ -90,11 +98,10 @@ parseStatement :: Parser Statement
 parseStatement = parseIf <|> parseWhile <|> parseReturn <|> (ExprStatement <$> parseExpr <* semicolon)
 
 parseBlock :: Parser Block
-parseBlock = between (tokenSymbol "{") (tokenSymbol "}") (many parseStatement)
-         <|> ((:[]) <$> parseStatement)
+parseBlock = between (tokenSymbol "{") (tokenSymbol "}") (many parseStatement) <|> ((:[]) <$> parseStatement)
 
 parseFn :: Parser TopLevelDeclaration
-parseFn = Function <$> parseType <*> identifier <*> parenCommas ((,) <$> parseType <*> identifier) <*> ((const Nothing <$> tokenSymbol ";") <|> (Just <$> parseBlock))
+parseFn = Function <$> parseType <*> identifier <*> pcallconv <*> parenCommas ((,) <$> parseType <*> identifier) <*> ((const Nothing <$> tokenSymbol ";") <|> (Just <$> parseBlock))
 
 parseTld :: Parser TopLevelDeclaration
 parseTld = parseFn

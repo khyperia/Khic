@@ -10,7 +10,7 @@ import BackendLLVM.Compile
 
 link :: IO ()
 link = do
-        handle <- runCommand "ld a.obj -lmsvcrt"
+        handle <- runCommand "ld a.obj -lmsvcrt -lKernel32"
         _ <- waitForProcess handle
         removeFile "a.obj"
         return ()

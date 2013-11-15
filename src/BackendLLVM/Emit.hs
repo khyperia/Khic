@@ -3,8 +3,10 @@ module BackendLLVM.Emit (emit) where
 import LLVM.General.AST as LAst
 import qualified LLVM.General.AST.Type as LTy
 import qualified LLVM.General.AST.Global as G
-import qualified LLVM.General.AST.Constant as Const
 import qualified LLVM.General.AST.Float as Float
+import qualified LLVM.General.AST.Constant as Const
+import qualified LLVM.General.AST.Linkage as Linkage
+import qualified LLVM.General.AST.AddrSpace as AddrSpace
 import qualified LLVM.General.AST.CallingConvention as CC
 import qualified LLVM.General.AST.IntegerPredicate as IntPredicate
 import qualified LLVM.General.AST.FloatingPointPredicate as FloatPredicate
@@ -84,10 +86,10 @@ emitExpr (Cast to valExpr) =
                 | fromSize > toSize = tellInstruction (Trunc val (IntegerType (fromIntegral toSize)) [])
                 | otherwise = return val
         cast from tov _ = error ("Cannot cast from " ++ show from ++ " to " ++ show tov)
-emitExpr (MethodCall funcExpr argsExpr) = do
+emitExpr (MethodCall callconv funcExpr argsExpr) = do
         args <- mapM emitExpr argsExpr
         func <- emitExpr funcExpr
-        tellInstruction (Call False CC.C [] (Right func) (map (\a -> (a, [])) args) [] []) -- TODO: Change CC.C to callconv
+        tellInstruction (Call False callconv [] (Right func) (map (\a -> (a, [])) args) [] [])
 
 tellBlockInst :: [Named Instruction] -> [Named Instruction] -> Terminator -> EmitBBAst Name
 tellBlockInst prefix instructions terminator = do
@@ -158,10 +160,11 @@ convertType (Structure containedTypes) = LTy.StructureType False (map convertTyp
 convertType (IntType numBits) = LTy.IntegerType (fromIntegral numBits)
 convertType (FloatType numBits) = LTy.FloatingPointType (fromIntegral numBits) IEEE
 convertType (Ast.VoidType) = LTy.VoidType
+convertType (Ast.PointerType ty) = LTy.PointerType (convertType ty) (AddrSpace.AddrSpace 0)
 convertType (UnknownType s) = LTy.NamedTypeReference (Name s)
 
 emitTld :: TopLevelDeclaration -> Definition
-emitTld (Ast.Function retType fnName args (Just body)) =
+emitTld (Ast.Function retType fnName callconv args (Just body)) =
         let bodyBlock = transformBB body;
             ((_, blocks), _) = flip runState BBState{ localContext = foldl (\m (_, str) -> Map.insert str (LocalReference (Name str)) m) Map.empty args, currentLabel = 1 } . runWriterT $
                 (if retType == Ast.VoidType then
@@ -174,14 +177,18 @@ emitTld (Ast.Function retType fnName args (Just body)) =
                 G.returnType = convertType retType,
                 G.name = Name fnName,
                 G.parameters = (map (\(t, s) -> Parameter (convertType t) (Name s) []) args, False),
-                G.basicBlocks = blocks
+                G.basicBlocks = blocks,
+                G.callingConvention = callconv
                 }
-emitTld (Ast.Function retType fnName args Nothing) =
-        GlobalDefinition functionDefaults {
+emitTld (Ast.Function retType fnName callconv args Nothing) =
+        let fn = functionDefaults {
                 G.returnType = convertType retType,
                 G.name = Name fnName,
-                G.parameters = (map (\(t, s) -> Parameter (convertType t) (Name s) []) args, False)
-                }
+                G.parameters = (map (\(t, s) -> Parameter (convertType t) (Name s) []) args, False),
+                G.callingConvention = callconv
+                };
+            fn2 = if callconv == CC.C then fn else fn{G.linkage = Linkage.DLLImport} in
+            GlobalDefinition fn2
 
 emit :: Program -> Module
 emit prgm =

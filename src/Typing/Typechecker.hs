@@ -32,13 +32,13 @@ typecheckExpr ctx0 (BinaryOp op l r) =
 typecheckExpr ctx0 (Negation x) =
         let (check, ty, ctx1) = typecheckExpr ctx0 x in
         (Negation check, isNum ty, ctx1)
-typecheckExpr ctx0 (MethodCall expr args) =
+typecheckExpr ctx0 (MethodCall callconv expr args) =
         let argstype = map (typecheckExpr ctx0) args;
             (exprcheck, exprtype, ctx1) = typecheckExpr ctx0 expr; in
         case exprtype of
         (FunctionType returnType fnArgsType) ->
                 let argsZip = zipWith fuseType fnArgsType (map second argstype) in
-                (MethodCall exprcheck (map first argstype), argsZip `seq` returnType, ctx1)
+                (MethodCall callconv exprcheck (map first argstype), argsZip `seq` returnType, ctx1)
         _ -> error "Left hand side of an invocation was not a function"
   where first (x, _, _) = x
         second (_, x, _) = x
@@ -58,7 +58,7 @@ typecheckExpr ctx0 (Cast ty expr) =
 
 typecheckStmt :: Context -> Statement -> (Statement, Context)
 typecheckStmt ctx (ExprStatement expr) = case expr of
-        (MethodCall _ _) -> ck
+        (MethodCall{}) -> ck
         (Assignment _ _) -> ck
         _ -> error ("Statement " ++ show expr ++ " not allowed as statement")
   where ck = let (check, _, newCtx) = typecheckExpr ctx expr in
@@ -91,17 +91,17 @@ typecheckBlock ctx0 (stmt:stmts) = let (newstmt, ctx1) = typecheckStmt ctx0 stmt
                                        (newstmt : newblock, ctx2)
 
 typecheckTld :: Context -> TopLevelDeclaration -> TopLevelDeclaration
-typecheckTld ctx0 (Function retType fnName args (Just body)) =
+typecheckTld ctx0 (Function retType fnName callconv args (Just body)) =
         let ctx1 = Map.insert rettypeKeyword retType ctx0;
             ctx2 = foldl (\ctxTemp (ty, arg) -> Map.insert arg ty ctxTemp) ctx1 args;
             (bodyCheck, _) = typecheckBlock ctx2 body in
-        Function retType fnName args (Just bodyCheck)
-typecheckTld _ x@(Function _ _ _ Nothing) = x
+        Function retType fnName callconv args (Just bodyCheck)
+typecheckTld _ x@(Function _ _ _ _ Nothing) = x
 
 buildInitialContext :: Program -> Context
 buildInitialContext = foldl (\ctx x ->
         let (name, ty) = getNameTy x in Map.insertWith (\l r -> error ("Clashing names " ++ show l ++ " and " ++ show r)) name ty ctx) Map.empty
-  where getNameTy (Function retType fnName args _) = (fnName, FunctionType retType (map fst args))
+  where getNameTy (Function retType fnName _ args _) = (fnName, FunctionType retType (map fst args))
 
 typecheck :: Program -> Program
 typecheck program =

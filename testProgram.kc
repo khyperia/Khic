@@ -1,14 +1,17 @@
 i32 getchar();
 i32 putchar(i32 x);
+i1 SetConsoleCursorPosition@stdcall(pi32 hConsoleOutput, i32 coords);
+pi32 GetStdHandle@stdcall(i32 handle);
 
 i32 `__main`()
 {
 	testwhile();
-	whee(111);
 	fun = funptr;
 	fun();
 	count(97);
 	putchar(assignTest(0));
+	setConsole(2,2);
+	getchar();
 	return 0;
 }
 
@@ -20,6 +23,12 @@ void testwhile()
 		putchar(x);
 		x = x + 1;
 	}
+}
+
+void setConsole(i32 x, i32 y)
+{
+	handle = GetStdHandle@stdcall(-10);
+	SetConsoleCursorPosition@stdcall(handle, x + y * 65536);
 }
 
 void funptr()
@@ -42,15 +51,4 @@ i32 assignTest(i32 val)
 	if (val == 0)
 		x = 110;
 	return x;
-}
-
-void whee(i32 p)
-{
-	x = getchar();
-	if (x != p)
-	{
-		putchar(p);
-		putchar(x);
-		whee(p);
-	}
 }
